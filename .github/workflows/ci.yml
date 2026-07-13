@@ -7,6 +7,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Needed by the release step (softprops/action-gh-release) — the default
+# GITHUB_TOKEN is read-only otherwise.
+permissions:
+  contents: write
+
 jobs:
   test-and-package:
     runs-on: windows-latest
