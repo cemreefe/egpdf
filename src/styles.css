@@ -433,9 +433,20 @@ body.dragging #viewer-root::after {
   html, body { overflow: visible !important; height: auto !important; display: block !important; }
   body > *:not(#print-container) { display: none !important; }
   #print-container { display: block; }
-  .print-page { page-break-after: always; break-inside: avoid; }
+  /* Each page is hard-limited to exactly one sheet — an image taller than the
+     sheet would otherwise spill onto a ghost page. */
+  .print-page {
+    height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    page-break-after: always; break-inside: avoid;
+    overflow: hidden;
+  }
   .print-page:last-child { page-break-after: auto; }
-  .print-page img { display: block; width: 100%; }
+  .print-page img {
+    display: block;
+    max-width: 100%; max-height: 100%;
+    width: auto; height: auto;
+  }
 }
 @page { margin: 0; }
 

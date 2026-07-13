@@ -4,7 +4,7 @@
 import { buildSavedPdf } from './save.js';
 import { loadPdf, viewerDebug } from './viewer.js';
 import { addSelectionRects, editTextFromSelection } from './edits.js';
-import { openPrintPreview, closePrintPreview } from './print.js';
+import { openPrintPreview, closePrintPreview, getPrintState } from './print.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -119,8 +119,13 @@ export async function maybeRunAutotest(ctx) {
       mkSel(spans[1] || spans[0]);
       const selText = window.getSelection().toString().trim();
       const started = editTextFromSelection(tab);
-      await sleep(200);
-      document.activeElement?.blur(); // commit the pre-filled text box
+      await sleep(300);
+      // commit the pre-filled text box: blur it whether or not focus landed
+      const editingEl = tab.view.holders[2].querySelector('.edit-item.textedit[contenteditable="true"]');
+      if (editingEl) {
+        if (document.activeElement === editingEl) editingEl.blur();
+        else editingEl.dispatchEvent(new Event('blur'));
+      }
       await sleep(200);
       const textEdit = tab.edits.find((e) => e.kind === 'text' && e.page === 3);
       const whiteEdit = tab.edits.find((e) => e.kind === 'whiteout' && e.page === 3);
@@ -273,18 +278,15 @@ export async function maybeRunAutotest(ctx) {
       firstImageBytes: document.getElementById('pp-page-img').src.length,
       pageInfo: document.getElementById('pp-pageinfo').textContent,
     };
-    const ocs = getComputedStyle(overlay);
-    const orect = overlay.getBoundingClientRect();
-    results.print.overlayStyle = {
-      display: ocs.display, zIndex: ocs.zIndex,
-      rect: `${Math.round(orect.width)}x${Math.round(orect.height)}`,
-      imgComplete: document.getElementById('pp-page-img').complete,
-    };
-    document.getElementById('pp-next').click();
-    await sleep(150);
-    results.print.pageInfo2 = document.getElementById('pp-pageinfo').textContent;
-    await sleep(500);
+    // saved2.pdf is a mixed-orientation doc: page 1 landscape (rotated
+    // earlier), page 2 portrait. Auto orientation should pick a portrait
+    // sheet and rotate page 1's image to fill it.
+    results.print.mixed = await getPrintState();
+    await sleep(400);
     await window.native.testCapture(out('t9-print-preview.png'));
+    document.getElementById('pp-next').click();
+    await sleep(300);
+    results.print.pageInfo2 = document.getElementById('pp-pageinfo').textContent;
     closePrintPreview();
     results.print.closed = overlay.classList.contains('hidden') && container.children.length === 0;
 

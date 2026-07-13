@@ -99,6 +99,9 @@ const checks = [
   ['print preview shows "1 of 2"', r.print?.pageInfo === '1 of 2'],
   ['print preview navigation', r.print?.pageInfo2 === '2 of 2'],
   ['print preview closes cleanly', r.print?.closed === true],
+  ['mixed orientation: auto sheet + rotation',
+    r.print?.mixed?.orientations?.[0] === true && r.print?.mixed?.orientations?.[1] === false
+    && r.print?.mixed?.sheetLandscape === false && r.print?.mixed?.page1Rotated === true],
 ];
 
 console.log('');

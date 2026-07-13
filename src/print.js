@@ -5,7 +5,8 @@
 import { loadPdf, pdfjsLib } from './viewer.js';
 import { buildSavedPdf } from './save.js';
 
-const PRINT_DPI = 150;
+const PRINT_DPI = 300;
+const MAX_RENDER_DIM = 4500; // cap oversized pages (A0 plans etc.)
 const $ = (id) => document.getElementById(id);
 
 export async function preparePrint(tab, onProgress) {
@@ -14,11 +15,14 @@ export async function preparePrint(tab, onProgress) {
   const container = $('print-container');
   container.replaceChildren();
   const total = pdf.numPages;
+  const pages = []; // {src, landscape, rotatedSrc}
   try {
     for (let n = 1; n <= total; n++) {
       onProgress?.(n, total);
       const page = await pdf.getPage(n);
-      const viewport = page.getViewport({ scale: PRINT_DPI / 72 });
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(PRINT_DPI / 72, MAX_RENDER_DIM / Math.max(base.width, base.height));
+      const viewport = page.getViewport({ scale });
       const canvas = document.createElement('canvas');
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
@@ -31,10 +35,12 @@ export async function preparePrint(tab, onProgress) {
         intent: 'print',
         annotationMode: pdfjsLib.AnnotationMode.ENABLE,
       }).promise;
+      const src = canvas.toDataURL('image/png');
+      pages.push({ src, landscape: base.width > base.height, rotatedSrc: null });
       const div = document.createElement('div');
       div.className = 'print-page';
       const img = new Image();
-      img.src = canvas.toDataURL('image/png');
+      img.src = src;
       div.appendChild(img);
       container.appendChild(div);
       canvas.width = 0; canvas.height = 0; // release backing store early
@@ -42,7 +48,28 @@ export async function preparePrint(tab, onProgress) {
   } finally {
     pdf.destroy();
   }
-  return total;
+  return pages;
+}
+
+// Rotate a page image 90° counterclockwise — the printer convention for
+// fitting landscape content onto a portrait sheet (content top lands on the
+// sheet's left edge; turn the sheet clockwise to read).
+function rotate90(src) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = im.naturalHeight;
+      c.height = im.naturalWidth;
+      const ctx = c.getContext('2d', { alpha: false });
+      ctx.translate(0, c.height);
+      ctx.rotate(-Math.PI / 2);
+      ctx.drawImage(im, 0, 0);
+      resolve(c.toDataURL('image/png'));
+    };
+    im.onerror = reject;
+    im.src = src;
+  });
 }
 
 export function clearPrint() {
@@ -51,16 +78,46 @@ export function clearPrint() {
 
 // ---- preview state -----------------------------------------------------------
 
-let state = null;      // { srcs, page, total }
+let state = null;      // { pages: [{src, landscape, rotatedSrc}], page, total }
 let statusCb = () => {};
 let wired = false;
 
-function updatePreview() {
+// One print job = one sheet orientation. "Auto" uses the document's dominant
+// orientation; pages that don't match the sheet get rotated 90° to fill it.
+function sheetIsLandscape() {
+  const v = $('pp-orient').value;
+  if (v === 'landscape') return true;
+  if (v === 'portrait') return false;
+  const landCount = state ? state.pages.filter((p) => p.landscape).length : 0;
+  return state ? landCount > state.pages.length / 2 : false;
+}
+
+async function pageSrcForSheet(i) {
+  const p = state.pages[i];
+  if (p.landscape === sheetIsLandscape()) return p.src;
+  if (!p.rotatedSrc) p.rotatedSrc = await rotate90(p.src);
+  return p.rotatedSrc;
+}
+
+async function updatePreview() {
   if (!state) return;
-  $('pp-page-img').src = state.srcs[state.page - 1] || '';
+  const cur = state.page;
+  const src = await pageSrcForSheet(cur - 1);
+  if (!state || state.page !== cur) return; // navigated away meanwhile
+  $('pp-page-img').src = src;
   $('pp-pageinfo').textContent = `${state.page} of ${state.total}`;
   $('pp-prev').disabled = state.page <= 1;
   $('pp-next').disabled = state.page >= state.total;
+}
+
+// Exposed for the e2e suite.
+export async function getPrintState() {
+  if (!state) return null;
+  return {
+    orientations: state.pages.map((p) => p.landscape),
+    sheetLandscape: sheetIsLandscape(),
+    page1Rotated: (await pageSrcForSheet(0)) !== state.pages[0].src,
+  };
 }
 
 export function isPrintPreviewOpen() {
@@ -99,11 +156,18 @@ async function doPrint() {
   const divs = document.querySelectorAll('#print-container .print-page');
   divs.forEach((d, i) => { d.style.display = !range || range.has(i + 1) ? '' : 'none'; });
 
+  // Match every page image to the chosen sheet orientation before printing.
+  statusCb('Preparing pages…');
+  const imgs = document.querySelectorAll('#print-container .print-page img');
+  for (let i = 0; i < state.pages.length; i++) {
+    if (!range || range.has(i + 1)) imgs[i].src = await pageSrcForSheet(i);
+  }
+
   const opts = {
     deviceName: $('pp-printer').value,
     copies: Math.max(1, Math.min(99, parseInt($('pp-copies').value, 10) || 1)),
     collate: $('pp-collate').value === '1',
-    landscape: $('pp-orient').value === 'landscape',
+    landscape: sheetIsLandscape(),
     color: $('pp-color').value === '1',
     duplexMode: $('pp-duplex').value,
     margins: { marginType: $('pp-scale').value === 'actual' ? 'none' : 'default' },
@@ -127,6 +191,7 @@ function wireOnce() {
   $('pp-prev').addEventListener('click', () => { if (state) { state.page = Math.max(1, state.page - 1); updatePreview(); } });
   $('pp-next').addEventListener('click', () => { if (state) { state.page = Math.min(state.total, state.page + 1); updatePreview(); } });
   $('pp-zoom').addEventListener('input', (e) => { $('pp-page-img').style.width = e.target.value + '%'; });
+  $('pp-orient').addEventListener('change', () => updatePreview());
   $('pp-range-mode').addEventListener('change', (e) => {
     $('pp-range').classList.toggle('hidden', e.target.value !== 'custom');
     if (e.target.value === 'custom') $('pp-range').focus();
@@ -143,10 +208,9 @@ function wireOnce() {
 
 export async function openPrintPreview(tab, setStatus = () => {}) {
   statusCb = setStatus;
-  await preparePrint(tab, (n, t) => setStatus(`Preparing preview… page ${n} / ${t}`));
+  const pages = await preparePrint(tab, (n, t) => setStatus(`Preparing preview… page ${n} / ${t}`));
   setStatus('');
-  const srcs = [...document.querySelectorAll('#print-container .print-page img')].map((i) => i.src);
-  state = { srcs, page: 1, total: srcs.length };
+  state = { pages, page: 1, total: pages.length };
 
   const sel = $('pp-printer');
   sel.replaceChildren();
@@ -168,6 +232,6 @@ export async function openPrintPreview(tab, setStatus = () => {}) {
 
   wireOnce();
   $('print-overlay').classList.remove('hidden');
-  updatePreview();
+  await updatePreview();
   return { pages: state.total, printers: printers.length };
 }
