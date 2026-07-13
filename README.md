@@ -57,22 +57,6 @@ npm install
 npm start
 ```
 
-## Testing
-
-```
-npm test              # e2e suite against the dev build
-npm run test:packaged # packages the app (electron-builder --dir) and runs the same suite against the real .exe
-```
-
-The app has a hidden `--autotest=<dir>` mode that drives a full scenario against a generated
-fixture PDF (`test/make-sample.mjs`): edit tools, true redaction, form filling with Turkish text,
-search, split-view compare, page rotate/reorder/delete, comments — then saves, reopens the result,
-and records assertions plus screenshots to `test/.out/<mode>/`. `test/run.mjs` launches it and
-verifies 16 checks; nonzero exit on any failure.
-
-CI: `.github/workflows/ci.yml` runs both suites on every push (windows-latest), builds the
-installer, and uploads it and the test screenshots as artifacts.
-
 ## Installer (+ .pdf file association)
 
 ```
@@ -81,19 +65,3 @@ npm run dist
 
 Produces `release/egPDF Setup <version>.exe`. After installing, right-click any PDF →
 **Open with → Choose another app → egPDF → Always** (or Settings → Apps → Default apps) to make it the default PDF app.
-
-## App icon
-
-`build/icon.png` is generated from the SVG in `build/icon-gen.cjs` (brand palette: Banner Red
-#CB2128, Cuban Ochre #E0A126, Petrol Teal #15706E, Pitch Green #3F7A3B, Warm Ink #1B1714,
-Recycled-paper cream #FBF6EC). Regenerate with:
-
-```
-npx electron build/icon-gen.cjs
-```
-
-## Notes
-
-- Redacting a page flattens that page to an image (its form fields are removed by design).
-- Compare is text-based; images and formatting are not compared.
-- Page reorder/rotate/delete are applied immediately in the tab but only written to disk on Save.
